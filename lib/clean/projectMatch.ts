@@ -160,7 +160,24 @@ function nameRegex(name: string): RegExp {
   re.lastIndex = 0;
   return re;
 }
-const count = (text: string, term: string) => (text ? (text.match(nameRegex(term)) || []).length : 0);
+let lastText = "";
+let lastCompact = "";
+/** Letters and digits only: "Wash’em All" -> "washemall". Memoised per text (scoring reuses the same texts). */
+function compactOf(text: string): string {
+  if (text !== lastText) {
+    lastText = text;
+    lastCompact = text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  }
+  return lastCompact;
+}
+/** Matches of a name in a text; long names also match with spacing/punctuation removed ("Washemall" = "Wash’em All"). */
+const count = (text: string, term: string) => {
+  if (!text) return 0;
+  const n = (text.match(nameRegex(term)) || []).length;
+  if (n) return n;
+  const key = term.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  return key.length >= 7 && compactOf(text).includes(key) ? 1 : 0;
+};
 void termRegex;
 
 export function scoreProjects(db: Db, input: MatchInput): MatchCandidate[] {
