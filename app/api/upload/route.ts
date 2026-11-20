@@ -2,6 +2,7 @@ import { after } from "next/server";
 import { adminOr401 } from "@/lib/auth";
 import { createSource, enqueueScan } from "@/lib/clean/pipeline";
 import { figmaFileKey } from "@/lib/clean/figma";
+import { readDb } from "@/lib/store";
 import type { SourceKind } from "@/lib/types";
 
 export const maxDuration = 300;
@@ -45,18 +46,31 @@ export async function POST(request: Request) {
     created.push({ id: s.id, title: s.title });
   }
 
-  for (const line of String(form.get("figmaUrls") || "").split(/\s+/).map((s) => s.trim()).filter(Boolean)) {
-    if (!figmaFileKey(line)) {
-      rejected.push({ name: line, reason: "Not a Figma file link" });
-      continue;
+  // Figma: one source per Figma file. Links to a file that's already added (or repeated in
+  // this paste, with a different frame or share code) are skipped, so a full list can be re-pasted.
+  const figmaLines = String(form.get("figmaUrls") || "").split(/\s+/).map((s) => s.trim()).filter(Boolean);
+  let duplicates = 0;
+  if (figmaLines.length) {
+    const known = new Set((await readDb()).sources.map((s) => (s.figmaUrl ? figmaFileKey(s.figmaUrl) : null)).filter(Boolean));
+    for (const line of figmaLines) {
+      const key = figmaFileKey(line);
+      if (!key) {
+        rejected.push({ name: line, reason: "Not a Figma file link" });
+        continue;
+      }
+      if (known.has(key)) {
+        duplicates++;
+        continue;
+      }
+      known.add(key);
+      const s = await createSource({ kind: "figma", autoProject, title: "", format: "figma", figmaUrl: line, projectId });
+      created.push({ id: s.id, title: line });
     }
-    const s = await createSource({ kind: "figma", autoProject, title: "", format: "figma", figmaUrl: line, projectId });
-    created.push({ id: s.id, title: line });
   }
 
   // Cleaning runs after the response, one file at a time across all uploads.
   after(async () => {
     for (const c of created) await enqueueScan(c.id);
   });
-  return Response.json({ created, rejected });
+  return Response.json({ created, rejected, duplicates });
 }

@@ -15,6 +15,7 @@ export function UploadForm({ projects, defaultProjectId }: { projects: Array<{ i
   const [done, setDone] = useState(0);
   const [created, setCreated] = useState<Created[]>([]);
   const [rejected, setRejected] = useState<Rejected[]>([]);
+  const [duplicates, setDuplicates] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [kind, setKind] = useState("auto");
   const [projectId, setProjectId] = useState(defaultProjectId || "auto");
@@ -49,7 +50,7 @@ export function UploadForm({ projects, defaultProjectId }: { projects: Array<{ i
     return out;
   }
 
-  async function post(fd: FormData): Promise<{ created: Created[]; rejected: Rejected[] }> {
+  async function post(fd: FormData): Promise<{ created: Created[]; rejected: Rejected[]; duplicates?: number }> {
     const res = await fetch("/api/upload", { method: "POST", body: fd });
     if (res.status === 401) throw new Error("Your session expired. Sign in again.");
     if (!res.ok) throw new Error(`Upload failed (${res.status})`);
@@ -62,6 +63,7 @@ export function UploadForm({ projects, defaultProjectId }: { projects: Array<{ i
     setError(null);
     setCreated([]);
     setRejected([]);
+    setDuplicates(0);
     setDone(0);
     try {
       if (kind === "figma") {
@@ -72,6 +74,7 @@ export function UploadForm({ projects, defaultProjectId }: { projects: Array<{ i
         const r = await post(fd);
         setCreated(r.created);
         setRejected(r.rejected);
+        setDuplicates(r.duplicates || 0);
         setFigmaUrls("");
       } else {
         // One request per file: big folders upload steadily and a failure only loses one file.
@@ -195,8 +198,13 @@ export function UploadForm({ projects, defaultProjectId }: { projects: Array<{ i
         {error && <span className="text-sm text-rose-600">{error}</span>}
       </div>
 
-      {(created.length > 0 || rejected.length > 0) && !busy && (
+      {(created.length > 0 || rejected.length > 0 || duplicates > 0) && !busy && (
         <div className="space-y-2 rounded-lg bg-slate-50 p-3 text-sm">
+          {duplicates > 0 && (
+            <p className="text-slate-600">
+              Skipped {duplicates} link{duplicates === 1 ? "" : "s"} to Figma file{duplicates === 1 ? "" : "s"} already added{created.length === 0 ? ": nothing new in this list" : ""}.
+            </p>
+          )}
           {created.length > 0 && (
             <p>
               Added {created.length}. They are processed one by one in the background.{" "}
