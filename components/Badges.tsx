@@ -3,6 +3,7 @@ import { KIND_LABEL, STATUS_LABEL } from "@/lib/types";
 
 const STATUS_STYLE: Record<SourceStatus, string> = {
   processing: "bg-sky-50 text-sky-700 ring-sky-200",
+  needs_access: "bg-slate-100 text-slate-600 ring-slate-200",
   needs_review: "bg-amber-50 text-amber-800 ring-amber-200",
   changes_requested: "bg-rose-50 text-rose-700 ring-rose-200",
   approved: "bg-emerald-50 text-emerald-700 ring-emerald-200",

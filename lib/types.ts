@@ -2,6 +2,7 @@ export type SourceKind = "proposal" | "case_study" | "figma" | "other";
 
 export type SourceStatus =
   | "processing"
+  | "needs_access"
   | "needs_review"
   | "changes_requested"
   | "approved"
@@ -78,9 +79,34 @@ export interface ReviewEvent {
   note?: string;
 }
 
+export interface MatchCandidate {
+  projectId: string;
+  score: number;
+  evidence: string[];
+}
+
+/** How a source was linked to a project (or why it wasn't). */
+export interface SourceMatch {
+  /** auto = linked automatically, suggested = needs your confirmation, none = no good candidate, confirmed = you decided. */
+  status: "auto" | "suggested" | "none" | "confirmed";
+  /** 0-100 */
+  confidence: number;
+  candidates: MatchCandidate[];
+  /** For unmatched files: the product name this file seems to be about (groups files into new projects). */
+  guessedName?: string;
+  /** Detected document type, when the upload asked for auto-detection. */
+  detectedKind?: SourceKind;
+  aiNote?: string;
+  matchedAt: string;
+}
+
 export interface Source {
   id: string;
   kind: SourceKind;
+  /** Upload asked us to detect the project / type. */
+  autoProject?: boolean;
+  autoKind?: boolean;
+  match?: SourceMatch;
   title: string;
   projectId?: string;
   status: SourceStatus;
@@ -110,6 +136,12 @@ export interface Project {
   industry?: string;
   country?: string;
   catalogId?: string;
+  /** Short description from the catalog, used by the AI tie-breaker. */
+  summary?: string;
+  /** Figma file keys listed for this project in the catalog. */
+  figmaKeys?: string[];
+  /** Figma links from the catalog (not necessarily uploaded yet). */
+  figmaLinks?: string[];
   createdAt: string;
 }
 
@@ -128,6 +160,7 @@ export const KIND_LABEL: Record<SourceKind, string> = {
 
 export const STATUS_LABEL: Record<SourceStatus, string> = {
   processing: "Processing",
+  needs_access: "Needs Figma access",
   needs_review: "Needs review",
   changes_requested: "Changes requested",
   approved: "Approved",

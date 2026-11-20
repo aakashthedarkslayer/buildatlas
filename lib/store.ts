@@ -65,7 +65,7 @@ async function load(): Promise<Db> {
 
 async function persist(db: Db) {
   await fs.mkdir(DATA_DIR, { recursive: true });
-  const tmp = `${DB_FILE}.${process.pid}.${Date.now()}.tmp`;
+  const tmp = `${DB_FILE}.${process.pid}.${randomUUID()}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(db, null, 1));
   await fs.rename(tmp, DB_FILE);
   const st = await fs.stat(DB_FILE);

@@ -10,6 +10,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   await requireAdmin();
   const db = await readDb();
   const pending = db.sources.filter((s) => s.status === "needs_review" || s.status === "changes_requested").length;
+  const toMap = db.sources.filter((s) => s.match && (s.match.status === "suggested" || s.match.status === "none") && s.status !== "processing").length;
   return (
     <div className="flex min-h-screen">
       <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col border-r border-slate-200 bg-white">
@@ -25,6 +26,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         <nav className="flex-1 space-y-0.5 px-3 text-sm">
           <NavLink href="/">Dashboard</NavLink>
           <NavLink href="/upload">Upload</NavLink>
+          <NavLink href="/mapping" badge={toMap || undefined}>
+            Mapping
+          </NavLink>
           <NavLink href="/sources" badge={pending || undefined}>
             Review queue
           </NavLink>

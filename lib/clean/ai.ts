@@ -100,3 +100,69 @@ export async function extractEntitiesWithAi(text: string, context: { project?: s
   }
   return [...all.values()];
 }
+
+// ---------------------------------------------------------------------------
+// Project matching tie-breaker
+
+export interface AiProjectPick {
+  projectId: string | null;
+  productName: string;
+  confidence: "high" | "medium" | "low";
+  reason: string;
+}
+
+const PICK_SCHEMA = {
+  type: "object",
+  properties: {
+    projectId: { type: ["string", "null"] },
+    productName: { type: "string" },
+    confidence: { type: "string", enum: ["high", "medium", "low"] },
+    reason: { type: "string" },
+  },
+  required: ["projectId", "productName", "confidence", "reason"],
+  additionalProperties: false,
+} as const;
+
+/**
+ * Decide which catalog project a document belongs to. Only used for files the
+ * rule-based matcher couldn't settle. The project list is sorted and stable so
+ * it caches across calls in a batch.
+ */
+export async function pickProjectWithAi(input: { label: string; head: string }, projects: Array<{ id: string; name: string; industry?: string; summary?: string }>, shortlist: string[]): Promise<AiProjectPick> {
+  const client = new Anthropic();
+  const catalog = projects
+    .slice()
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((p) => `${p.id} | ${p.name}${p.industry ? ` | ${p.industry}` : ""}${p.summary ? ` | ${p.summary.slice(0, 160)}` : ""}`)
+    .join("\n");
+  const response = await client.beta.messages.create({
+    model: "claude-opus-5-5",
+    max_tokens: 4000,
+    betas: ["server-side-fallback-2026-07-01"],
+    fallbacks: "default",
+    output_config: { effort: "low", format: { type: "json_schema", schema: PICK_SCHEMA } },
+    system: [
+      {
+        type: "text",
+        text:
+          "You match a software agency's documents (proposals, case studies, design files) to the project they belong to.\n" +
+          "Use the product/app name on the title page first; treat names that appear only deep in the text with suspicion, because documents are often copied from an earlier client's template.\n" +
+          "Return projectId from the catalog, or null if none clearly fits. productName is the product the document is about, as named in it. Never guess an id that is not in the catalog.\n\n" +
+          `Catalog (id | name | industry | summary):\n${catalog}`,
+        cache_control: { type: "ephemeral" },
+      },
+    ],
+    messages: [
+      {
+        role: "user",
+        content: `File: ${input.label}\nRule-based shortlist (best first): ${shortlist.join(", ") || "none"}\n\n<title_pages>\n${input.head.slice(0, 6000)}\n</title_pages>`,
+      },
+    ],
+  });
+  if (response.stop_reason === "refusal") throw new Error("AI matching declined this file");
+  const block = response.content.find((b) => b.type === "text");
+  if (!block || block.type !== "text") throw new Error("AI matching returned nothing");
+  const pick = JSON.parse(block.text) as AiProjectPick;
+  if (pick.projectId && !projects.some((p) => p.id === pick.projectId)) pick.projectId = null;
+  return pick;
+}

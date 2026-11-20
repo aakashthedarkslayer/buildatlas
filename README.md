@@ -32,6 +32,26 @@ Uploads, cleaned files and the database (`db.json`) live in `./data` (or `DATA_D
    - **Save & re-clean** regenerates the copy, then re-reads it and lists any **possible leftovers**.
 5. **Approve** (or request changes). A project is blueprint-complete when its proposal, case study and Figma are all approved.
 
+## Automatic mapping (which file belongs to which project)
+
+Upload with **Type** and **Project** set to “Detect automatically” (the default), using **Choose a folder** or drag a whole folder in. Every file is uploaded on its own (so a big folder can't fail all at once), its type is detected (proposal / case study), and it is matched against the catalog:
+
+| Signal | Weight |
+|---|---|
+| Title the document gives itself (“Case Study **U-Chefs App** Version 1.0”, “Proposal for …”) compared loosely with project names (“U-Chefs” = “UChefs”, “Property Link Plus” = “PropertyLink+”) | strongest |
+| Project / brand name on the title pages, in the file name, in the text | strong |
+| Same Figma file ID as the catalog lists for the project | exact |
+| Client contact names, client domains from the catalog | supporting |
+| Optional: Claude reads the title pages of files the rules can't settle | tie-breaker |
+
+Agency branding never counts as evidence, everyday words count less, and a name shared by several projects (“Adelante”, phase 2 / phase 3 entries) is never linked automatically. Confident matches are linked straight away; the rest wait on the **Mapping** page, where you confirm in bulk, pick another project, or group unmatched files into a new project. **Add Figma links from catalog** turns every Figma link in the catalog into a source already linked to its project. **Blueprint bundles** shows which projects have a proposal, a case study and a Figma.
+
+Measured on the 60 real case-study PDFs from the portfolio site (file names are random IDs, so no help from the name): 35 linked automatically, all correctly; the right project offered first for 56; no wrong automatic links. The rest were genuinely ambiguous (e.g. a case study titled with another catalog project's name).
+
+```bash
+npx tsx --conditions=react-server scripts/test-match.ts portfolio_master.json list.txt pdf-folder/
+```
+
 ## What cleaning does per format
 
 - **PDF**: true redaction with MuPDF. Matched text is removed from the page content, not covered over. Replacement text is drawn in the original's size, colour and weight, and shrinks a little if it is longer than the original. Selected images and drawn areas are blanked pixel by pixel. Links to removed sites, document metadata and bookmarks are stripped. PDFs can't reflow, so short replacements look best.

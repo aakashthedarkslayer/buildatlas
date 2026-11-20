@@ -2,13 +2,96 @@ import "server-only";
 import { promises as fs } from "fs";
 import path from "path";
 import { getProject, mutate, newId, now, readDb, sourceDir, termsFor, updateSource } from "../store";
-import type { Finding, ImageItem, Source } from "../types";
+import type { Finding, ImageItem, Source, SourceMatch } from "../types";
 import { DEFAULT_REPLACEMENT } from "../types";
-import { aiConfigured, extractEntitiesWithAi } from "./ai";
+import { aiConfigured, extractEntitiesWithAi, pickProjectWithAi } from "./ai";
 import { analyzeDocx, cleanDocx, docxText, renderDocxPages } from "./docx";
-import { analyzeFigma, buildFigmaPlugin, figmaConfigured, figmaThumbnails } from "./figma";
+import { analyzeFigma, buildFigmaPlugin, figmaConfigured, figmaFileKey, figmaThumbnails } from "./figma";
 import { detectPatterns, occurrences, residualCheck, termToFinding } from "./match";
 import { analyzePdf, cleanPdf, pdfText, renderPdfPages } from "./pdf";
+import { decide, declaredTitle, detectKind, figmaKeysIn, nameFromLabel, scoreProjects, type MatchInput } from "./projectMatch";
+
+// ---------------------------------------------------------------------------
+// One scan at a time: a 200-file folder upload must not run 200 MuPDF jobs at once.
+let queue: Promise<void> = Promise.resolve();
+export function enqueueScan(id: string): Promise<void> {
+  queue = queue.then(() => scanSource(id)).catch(() => undefined);
+  return queue;
+}
+
+/** Title-page text: the first two PDF pages, or the start of other documents. */
+function headOf(text: string): string {
+  const pages = text.split("\f");
+  return (pages.length > 1 ? pages.slice(0, 2).join("\n") : text).slice(0, 4000);
+}
+
+function matchInputFor(source: Source, text: string): MatchInput {
+  const label = source.format === "figma" ? `${decodeURIComponent((source.figmaUrl || "").split("/").slice(5, 6).join(" "))} ${source.title}` : source.fileName || source.title;
+  const keys = figmaKeysIn(text);
+  const own = source.figmaUrl ? figmaFileKey(source.figmaUrl) : null;
+  return { text, head: headOf(text), label, figmaKeys: own ? [own, ...keys] : keys };
+}
+
+/**
+ * Work out which project a source belongs to. Confident matches are linked
+ * straight away; everything else is stored as a suggestion for the Mapping page.
+ */
+export async function matchSource(id: string, text: string): Promise<SourceMatch> {
+  const db = await readDb();
+  const source = db.sources.find((s) => s.id === id)!;
+  const input = matchInputFor(source, text);
+  let candidates = scoreProjects(db, input);
+  let { status, confidence } = decide(candidates);
+  let guessedName: string | undefined;
+  let aiNote: string | undefined;
+
+  if (status !== "auto" && aiConfigured() && db.projects.length && (input.head.trim() || input.label.trim())) {
+    try {
+      const pick = await pickProjectWithAi(
+        { label: input.label, head: input.head },
+        db.projects.map((p) => ({ id: p.id, name: p.name, industry: p.industry, summary: p.summary })),
+        candidates.map((c) => db.projects.find((p) => p.id === c.projectId)!.name),
+      );
+      guessedName = pick.productName || undefined;
+      aiNote = `AI (${pick.confidence}): ${pick.reason}`;
+      if (pick.projectId) {
+        const existing = candidates.find((c) => c.projectId === pick.projectId);
+        if (existing && existing === candidates[0] && pick.confidence !== "low") {
+          status = "auto";
+          confidence = Math.max(80, existing.score);
+          existing.evidence.push(`AI agrees: ${pick.reason}`);
+        } else if (pick.confidence !== "low") {
+          const entry = existing || { projectId: pick.projectId, score: pick.confidence === "high" ? 65 : 40, evidence: [] as string[] };
+          entry.evidence.unshift(`AI: ${pick.reason}`);
+          candidates = [entry, ...candidates.filter((c) => c !== entry)];
+          status = "suggested";
+          confidence = Math.max(confidence, entry.score);
+        }
+      }
+    } catch (e) {
+      aiNote = `AI matching failed: ${(e as Error).message}`;
+    }
+  }
+  if (status !== "auto" && !guessedName) guessedName = declaredTitle(input.head) || nameFromLabel(input.label) || undefined;
+
+  const match: SourceMatch = { status, confidence, candidates, guessedName, aiNote, detectedKind: source.match?.detectedKind, matchedAt: now() };
+  await updateSource(id, (s) => {
+    s.match = match;
+    if (status === "auto") s.projectId = candidates[0].projectId;
+  });
+  return match;
+}
+
+/** Re-run matching on an already-scanned source (e.g. after importing the catalog). */
+export async function rematchSource(id: string): Promise<SourceMatch | null> {
+  const s = (await readDb()).sources.find((x) => x.id === id);
+  if (!s || s.match?.status === "confirmed") return null;
+  const text = await fs.readFile(path.join(sourceDir(id), "original.txt"), "utf8").catch(() => "");
+  const before = s.projectId;
+  const m = await matchSource(id, text);
+  if (m.status === "auto" && m.candidates[0].projectId !== before && s.status !== "needs_access") void enqueueScan(id);
+  return m;
+}
 
 export const originalPath = (s: Source) => path.join(sourceDir(s.id), `original.${s.format}`);
 export const cleanedPath = (s: Source) => path.join(sourceDir(s.id), s.format === "figma" ? "blueprint-cleaner.zip" : `cleaned.${s.format}`);
@@ -42,7 +125,7 @@ export async function scanSource(id: string): Promise<void> {
   try {
     const db = await readDb();
     const source = db.sources.find((s) => s.id === id)!;
-    const project = await getProject(source.projectId);
+    let project = await getProject(source.projectId);
     let text = "";
     let images: Array<Omit<ImageItem, "redact"> & { png?: Uint8Array; bytes?: Uint8Array; ext?: string }> = [];
     let pages: number | undefined;
@@ -74,8 +157,17 @@ export async function scanSource(id: string): Promise<void> {
           target.preview = name;
         }
       }
+    } else if (!figmaConfigured()) {
+      // Can't read the file yet, but the link alone (file key + name in the URL) is enough to map it.
+      await fs.mkdir(sourceDir(id), { recursive: true });
+      await fs.writeFile(path.join(sourceDir(id), "original.txt"), "");
+      if (source.autoProject && !source.projectId && source.match?.status !== "confirmed") await matchSource(id, "");
+      await updateSource(id, (s) => {
+        s.status = "needs_access";
+        s.error = "Add FIGMA_TOKEN to the server's environment to scan and clean this file. Mapping works without it.";
+      });
+      return;
     } else {
-      if (!figmaConfigured()) throw new Error("FIGMA_TOKEN is not set, so Figma files can't be scanned yet. Add it in .env and click Re-scan.");
       const a = await analyzeFigma(source.figmaUrl!);
       text = a.text;
       images = a.images;
@@ -84,6 +176,30 @@ export async function scanSource(id: string): Promise<void> {
       await writePreviews(id, "orig", thumbs.map((t) => t.png));
     }
     await fs.writeFile(path.join(sourceDir(id), "original.txt"), text);
+
+    // ---- what is this file, and which project does it belong to?
+    if (source.autoKind && source.format !== "figma") {
+      const kind = detectKind(source.fileName || source.title, text);
+      await updateSource(id, (s) => {
+        s.kind = kind;
+        s.match = { ...(s.match || { status: "none", confidence: 0, candidates: [], matchedAt: now() }), detectedKind: kind };
+      });
+    }
+    // Files named like "3c85e1f0-....pdf" get the title the document gives itself.
+    const declared = declaredTitle(headOf(text));
+    if (declared && /^[0-9a-f]{8,}(-[0-9a-f]{4,})*$/i.test(source.title.trim())) {
+      title = declared;
+      await updateSource(id, (s) => {
+        s.title = declared;
+      });
+    }
+    if (source.autoProject && !source.projectId && source.match?.status !== "confirmed") {
+      const m = await matchSource(id, text);
+      if (m.status === "auto") {
+        source.projectId = m.candidates[0].projectId;
+        project = await getProject(source.projectId);
+      }
+    }
 
     // PDF image previews (decoded by MuPDF).
     for (const im of images) {

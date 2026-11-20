@@ -6,10 +6,12 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { requireAdmin } from "@/lib/auth";
-import { applyClean, scanSource, verifyFigma } from "@/lib/clean/pipeline";
+import { applyClean, enqueueScan, rematchSource, verifyFigma } from "@/lib/clean/pipeline";
+import { figmaFileKey } from "@/lib/clean/figma";
+import { applyCatalog } from "@/lib/catalog";
 import { occurrences } from "@/lib/clean/match";
 import { createSessionValue, SESSION_COOKIE, SESSION_MAX_AGE } from "@/lib/session";
-import { mutate, newId, now, sourceDir, updateSource } from "@/lib/store";
+import { mutate, newId, now, readDb, sourceDir, updateSource } from "@/lib/store";
 import type { Finding, ImageItem, SourceKind, Term, TermType } from "@/lib/types";
 import { DEFAULT_REPLACEMENT } from "@/lib/types";
 import path from "path";
@@ -102,7 +104,7 @@ export async function rescan(sourceId: string) {
   await updateSource(sourceId, (s) => {
     s.status = "processing";
   });
-  after(() => scanSource(sourceId));
+  after(() => enqueueScan(sourceId));
   revalidatePath(`/sources/${sourceId}`);
 }
 
@@ -143,7 +145,7 @@ export async function updateSourceMeta(sourceId: string, form: FormData) {
     if (title) s.title = title;
   });
   // A different project brings different dictionary terms: scan again.
-  if (projectChanged) after(() => scanSource(sourceId));
+  if (projectChanged) after(() => enqueueScan(sourceId));
   revalidatePath(`/sources/${sourceId}`);
 }
 
@@ -218,15 +220,6 @@ export async function createProject(form: FormData) {
   redirect(`/projects/${id}`);
 }
 
-const hostOf = (u: string) => {
-  try {
-    const h = new URL(/^https?:\/\//.test(u) ? u : `https://${u}`).hostname.replace(/^www\./, "");
-    return /(apple\.com|google\.com|play\.google|herokuapp\.com|24livehost\.com|projectstatus\.in|figma\.com|sharepoint\.com|amazonaws\.com|web\.app)$/.test(h) ? null : h;
-  } catch {
-    return null;
-  }
-};
-
 /**
  * Import the portfolio master catalog (JSON exported earlier). Each row becomes a
  * project; client contacts and live-site domains become that project's terms.
@@ -242,36 +235,7 @@ export async function importCatalog(_prev: string | null, form: FormData): Promi
   } catch {
     return "That file isn't a JSON array of projects.";
   }
-  let created = 0;
-  let terms = 0;
-  await mutate((db) => {
-    for (const r of rows) {
-      const name = String(r["Project Name"] || r.name || "").trim();
-      if (!name) continue;
-      const catalogId = String(r.ID || r.id || "");
-      let p = db.projects.find((x) => (catalogId && x.catalogId === catalogId) || x.name.toLowerCase() === name.toLowerCase());
-      if (!p) {
-        p = { id: newId(), name, catalogId: catalogId || undefined, industry: String(r["Industry (normalised)"] || "") || undefined, country: String(r.Country || "") || undefined, createdAt: now() };
-        db.projects.push(p);
-        created++;
-      }
-      const add = (text: string, type: TermType) => {
-        text = text.trim();
-        if (text.length < 3 || db.terms.some((t) => t.projectId === p!.id && t.text.toLowerCase() === text.toLowerCase())) return;
-        db.terms.push({ id: newId(), text, type, replacement: DEFAULT_REPLACEMENT[type], scope: "project", projectId: p!.id, enabled: true, createdAt: now() });
-        terms++;
-      };
-      const contact = String(r["Client Contact"] || "");
-      if (contact && !/^(na|n\/a|-)$/i.test(contact)) add(contact, "person");
-      for (const u of String(r["Live Link"] || "").split(/\s*\|\s*|\s+/)) {
-        const h = hostOf(u);
-        if (h) add(h, "url");
-      }
-      // Short brand form of the project name, e.g. "LimoMate" from "Website and app for MY LIMO MATE".
-      const short = name.replace(/\s*[-–|:(].*$/, "").replace(/\b(app|application|development|project|website|web|mobile|platform|phase\s*\d+)\b/gi, "").replace(/\s+/g, " ").trim();
-      if (short && short.toLowerCase() !== name.toLowerCase()) add(short, "product");
-    }
-  });
+  const { created, terms } = await mutate((db) => applyCatalog(db, rows));
   revalidatePath("/projects");
   return `Imported ${rows.length} rows: ${created} new projects, ${terms} dictionary terms.`;
 }
@@ -285,4 +249,106 @@ export async function deleteProject(id: string) {
   });
   revalidatePath("/projects");
   redirect("/projects");
+}
+
+// ---------------------------------------------------------------- mapping
+
+/** Link sources to projects (from the Mapping page) and re-clean them with that project's dictionary. */
+export async function confirmMatches(pairs: Array<{ sourceId: string; projectId: string }>) {
+  await requireAdmin();
+  const changed: string[] = [];
+  await mutate((db) => {
+    for (const { sourceId, projectId } of pairs) {
+      const s = db.sources.find((x) => x.id === sourceId);
+      if (!s || !db.projects.some((p) => p.id === projectId)) continue;
+      if (s.projectId !== projectId) changed.push(s.id);
+      s.projectId = projectId;
+      s.match = { ...(s.match || { candidates: [], confidence: 100, matchedAt: now() }), status: "confirmed" };
+      s.updatedAt = now();
+    }
+  });
+  after(async () => {
+    for (const id of changed) await enqueueScan(id);
+  });
+  revalidatePath("/mapping");
+}
+
+/** Mark sources as not belonging to any project (they stop showing as "needs a decision"). */
+export async function markUnlinked(sourceIds: string[]) {
+  await requireAdmin();
+  await mutate((db) => {
+    for (const s of db.sources.filter((x) => sourceIds.includes(x.id))) {
+      s.projectId = undefined;
+      s.match = { ...(s.match || { candidates: [], confidence: 0, matchedAt: now() }), status: "confirmed" };
+    }
+  });
+  revalidatePath("/mapping");
+}
+
+/** Create a project for a group of unmatched files and link them all. */
+export async function createProjectForSources(name: string, sourceIds: string[]) {
+  await requireAdmin();
+  name = name.trim();
+  if (!name || !sourceIds.length) return;
+  const id = newId();
+  await mutate((db) => {
+    db.projects.push({ id, name, createdAt: now() });
+    for (const s of db.sources.filter((x) => sourceIds.includes(x.id))) {
+      s.projectId = id;
+      s.match = { ...(s.match || { candidates: [], confidence: 100, matchedAt: now() }), status: "confirmed" };
+    }
+  });
+  after(async () => {
+    for (const sid of sourceIds) await enqueueScan(sid);
+  });
+  revalidatePath("/mapping");
+  revalidatePath("/projects");
+}
+
+export async function setSourceKind(sourceId: string, kind: SourceKind) {
+  await requireAdmin();
+  await updateSource(sourceId, (s) => {
+    s.kind = kind;
+    s.autoKind = false;
+  });
+  revalidatePath("/mapping");
+}
+
+/** Re-run matching for every source you haven't decided on yet (e.g. after importing the catalog). */
+export async function rematchAll() {
+  await requireAdmin();
+  const ids = (await readDb()).sources.filter((s) => s.match?.status !== "confirmed" && s.status !== "processing" && (s.autoProject || s.match)).map((s) => s.id);
+  for (const id of ids) await rematchSource(id);
+  revalidatePath("/mapping");
+}
+
+/** Turn the Figma links listed in the catalog into sources, already linked to their project (one database write). */
+export async function addCatalogFigmas(): Promise<void> {
+  await requireAdmin();
+  const t = now();
+  const ids = await mutate((db) => {
+    const have = new Set(db.sources.map((s) => (s.figmaUrl ? figmaFileKey(s.figmaUrl) : null)).filter(Boolean));
+    const added: string[] = [];
+    for (const p of db.projects) {
+      for (const url of p.figmaLinks || []) {
+        const key = figmaFileKey(url);
+        if (!key || have.has(key)) continue;
+        have.add(key);
+        const id = newId();
+        db.sources.unshift({
+          id, kind: "figma", title: "", format: "figma", figmaUrl: url, projectId: p.id, status: "processing",
+          findings: [], images: [], residual: [], aiUsed: false, history: [{ at: t, action: "uploaded", note: "Added from catalog" }], createdAt: t, updatedAt: t,
+          match: { status: "confirmed", confidence: 100, candidates: [{ projectId: p.id, score: 100, evidence: ["Listed for this project in the catalog"] }], matchedAt: t },
+        });
+        added.push(id);
+      }
+    }
+    return added;
+  });
+  await Promise.all(ids.map((id) => fs.mkdir(sourceDir(id), { recursive: true })));
+  after(async () => {
+    for (const id of ids) await enqueueScan(id);
+  });
+  revalidatePath("/mapping");
+  revalidatePath("/sources");
 }
