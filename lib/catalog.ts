@@ -44,6 +44,18 @@ export function applyCatalog(db: Db, rows: Array<Record<string, unknown>>): { cr
       .replace(/\s+/g, " ")
       .trim();
     if (summary) p.summary = summary.slice(0, 300);
+    const list = (v: unknown) => String(v || "").split(/\s*,\s*/).map((x) => x.trim()).filter(Boolean);
+    const num = (v: unknown) => (typeof v === "number" && v > 0 ? v : Number(v) > 0 ? Number(v) : undefined);
+    p.details = {
+      overview: String(r.Overview || "").trim() || undefined,
+      challenges: String(r.Challenges || "").trim() || undefined,
+      solution: String(r.Solution || "").trim() || undefined,
+      platforms: list(r.Platforms),
+      tech: list(r["Tech Stack (normalised)"]),
+      features: list(r["Feature Tags (auto)"]),
+      durationMonths: num(r["Duration (months)"]),
+      teamSize: num(r["Team Size"]),
+    };
     const links = String(r["Design Link(s)"] || "")
       .split(/\s*\|\s*|\s+/)
       .filter((u) => /figma\.com\//.test(u));

@@ -12,5 +12,6 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!login|api|_next/static|_next/image|favicon.ico).*)"],
+  // The store (/store) is public; everything else needs the admin session.
+  matcher: ["/((?!login|store|api|_next/static|_next/image|favicon.ico).*)"],
 };

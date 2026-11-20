@@ -35,6 +35,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </NavLink>
           <NavLink href="/projects">Projects</NavLink>
           <NavLink href="/terms">Dictionary</NavLink>
+          <div className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Store</div>
+          <NavLink href="/blueprints">Store listings</NavLink>
+          <NavLink href="/orders" badge={(db.orders || []).filter((o) => o.status === "pending").length || undefined}>Orders</NavLink>
+          <a href="/store" target="_blank" className="flex items-center justify-between rounded-lg px-3 py-2 font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900">Open store ↗</a>
         </nav>
         <div className="space-y-1.5 border-t border-slate-200 px-5 py-4 text-xs text-slate-500">
           <Status ok={aiConfigured()} label="AI detection" />

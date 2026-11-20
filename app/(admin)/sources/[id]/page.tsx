@@ -110,7 +110,7 @@ export default async function SourcePage(props: PageProps<"/sources/[id]">) {
                 </label>
               )}
               <div className="flex flex-wrap gap-2">
-                <button name="decision" value="approve" className="btn btn-success" disabled={busy || s.status === "error"}>Approve cleaned copy</button>
+                <button name="decision" value="approve" className="btn btn-success" disabled={busy || s.status === "error" || s.status === "needs_access" || (s.format === "figma" && !s.residualCheckedAt)} title={s.format === "figma" && !s.residualCheckedAt ? "Verify the cleaned Figma duplicate first" : undefined}>Approve cleaned copy</button>
                 <button name="decision" value="changes" className="btn">Request changes</button>
                 <button name="decision" value="note" className="btn">Add note</button>
               </div>

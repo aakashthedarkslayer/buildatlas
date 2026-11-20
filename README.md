@@ -32,6 +32,15 @@ Uploads, cleaned files and the database (`db.json`) live in `./data` (or `DATA_D
    - **Save & re-clean** regenerates the copy, then re-reads it and lists any **possible leftovers**.
 5. **Approve** (or request changes). A project is blueprint-complete when its proposal, case study and Figma are all approved.
 
+## Store (buyer-facing)
+
+Open **http://localhost:3100/store**: the public store where agencies and founders browse and buy blueprints. No login.
+
+- **Admin → Store listings** drafts a listing per project from the catalog (title, tagline, overview, features, problems solved, platforms, tech), cleaned with that project's dictionary. A leak check lists any client name, person, contact detail or unknown proper name still in the text. Nothing is public until you click **Publish**.
+- A listing only ever delivers **approved, cleaned** files (proposal / case study / Figma). Previews in the store are the cleaned pages; downloads are named after the listing, never the client file name.
+- **Checkout** creates an order (no card payments yet). In **Admin → Orders** you mark it paid after invoicing; the buyer's order page then unlocks the downloads. Unpaid orders and drafts can't be downloaded or seen.
+- Signed in as admin, the store also shows your drafts (marked “Draft”) so you can preview them.
+
 ## Master map
 
 `seed/master-map.json` holds the mapping prepared from the portfolio catalog, the Figma sheets, the case studies and the 2026 lead proposals: every project with its proposals, case studies and Figma files, plus a few open questions. On first start the dashboard offers **Load master map**; afterwards the **Master map** page shows each project's bundle (proposal / case study / Figma) and the files behind it.
@@ -61,6 +70,8 @@ Measured on the 60 real case-study PDFs from the portfolio site (file names are 
 ```bash
 npx tsx --conditions=react-server scripts/test-match.ts portfolio_master.json list.txt pdf-folder/
 ```
+
+Every document is also checked for **other projects' distinctive names** (e.g. "OAPG" left inside three other clients' case studies by a reused template). Those are flagged and replaced like any other finding.
 
 ## What cleaning does per format
 

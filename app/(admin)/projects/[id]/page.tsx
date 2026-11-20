@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { deleteProject, deleteTerm, saveTerm } from "@/app/actions";
+import { createBlueprint, deleteProject, deleteTerm, saveTerm } from "@/app/actions";
 import { KindBadge, StatusBadge, timeAgo } from "@/components/Badges";
 import { readDb } from "@/lib/store";
 import { KIND_LABEL, TYPE_LABEL, type SourceKind, type TermType } from "@/lib/types";
@@ -22,7 +22,13 @@ export default async function ProjectPage(props: PageProps<"/projects/[id]">) {
           <h1 className="text-2xl font-semibold">{p.name}</h1>
           <p className="text-sm text-slate-500">{[p.industry, p.country, p.catalogId && `Catalog ${p.catalogId}`].filter(Boolean).join(" · ")}</p>
         </div>
-        <Link href={`/upload?project=${id}`} className="btn btn-primary">Upload for this project</Link>
+        <div className="flex gap-2">
+          {(() => {
+            const bp = (db.blueprints || []).find((b) => b.projectId === id);
+            return bp ? <Link href={`/blueprints/${bp.id}`} className="btn">Store listing</Link> : <form action={createBlueprint.bind(null, id)}><button className="btn">Create store listing</button></form>;
+          })()}
+          <Link href={`/upload?project=${id}`} className="btn btn-primary">Upload for this project</Link>
+        </div>
       </header>
 
       <section className="grid gap-3 sm:grid-cols-3">

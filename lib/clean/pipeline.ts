@@ -10,7 +10,7 @@ import { analyzeFigma, buildFigmaPlugin, figmaConfigured, figmaFileKey, figmaThu
 import { detectPatterns, occurrences, residualCheck, termToFinding } from "./match";
 import { analyzePdf, cleanPdf, pdfText, renderPdfPages } from "./pdf";
 import { mapHintFor } from "../masterMap";
-import { decide, declaredTitle, detectKind, figmaKeysIn, nameFromLabel, scoreProjects, type MatchInput } from "./projectMatch";
+import { decide, declaredTitle, distinctiveProjectNames, detectKind, figmaKeysIn, nameFromLabel, scoreProjects, type MatchInput } from "./projectMatch";
 
 // ---------------------------------------------------------------------------
 // One scan at a time: a 200-file folder upload must not run 200 MuPDF jobs at once.
@@ -244,6 +244,16 @@ export async function scanSource(id: string): Promise<void> {
     if (project) {
       // The project's own name is the most obvious identifier.
       add(termToFinding({ text: project.name, type: "product", replacement: DEFAULT_REPLACEMENT.product }, "project", text, newId(), "Project name"));
+    }
+    // Another client's name left over from a reused template ("OAPG" inside the Baby Latch case study).
+    const ownName = (project?.name || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+    for (const other of distinctiveProjectNames(db)) {
+      if (other.projectId === source.projectId) continue;
+      // Same brand as this project (e.g. two "UChefs" projects): not a leftover.
+      const key = other.name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+      if (ownName && (ownName.includes(key) || key.includes(ownName))) continue;
+      if (findings.has(other.name.toLowerCase())) continue;
+      add(termToFinding({ text: other.name, type: "client", replacement: DEFAULT_REPLACEMENT.client }, "global", text, newId(), "Another project's name: probably left over from a reused template"));
     }
     for (const p of detectPatterns(text)) {
       const { count, variants } = occurrences(text, p.text);

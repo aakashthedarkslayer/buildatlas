@@ -149,7 +149,59 @@ export interface Project {
   month?: string;
   leadFolder?: string;
   notes?: string;
+  /** Catalog facts used to draft a store listing (still contain client names: always cleaned before showing). */
+  details?: ProjectDetails;
   createdAt: string;
+}
+
+export interface ProjectDetails {
+  overview?: string;
+  challenges?: string;
+  solution?: string;
+  platforms?: string[];
+  tech?: string[];
+  features?: string[];
+  durationMonths?: number;
+  teamSize?: number;
+}
+
+/** A store listing: what buyers see. Only approved files are ever delivered. */
+export interface Blueprint {
+  id: string;
+  projectId: string;
+  slug: string;
+  title: string;
+  tagline: string;
+  summary: string;
+  industry: string;
+  platforms: string[];
+  tech: string[];
+  features: string[];
+  challenges: string[];
+  durationMonths?: number;
+  teamSize?: number;
+  /** USD */
+  price: number;
+  published: boolean;
+  /** Approved sources delivered to buyers (proposal / case study / Figma). */
+  sourceIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Order {
+  id: string;
+  /** Secret used in the buyer's order link. */
+  token: string;
+  blueprintIds: string[];
+  name: string;
+  email: string;
+  company?: string;
+  note?: string;
+  total: number;
+  status: "pending" | "paid" | "cancelled";
+  createdAt: string;
+  paidAt?: string;
 }
 
 /** A file the master map knows about: uploading a file with this name links it automatically. */
@@ -178,6 +230,8 @@ export interface Db {
   terms: Term[];
   /** Master map: known proposals / case studies and open questions. */
   mapFiles?: MapFile[];
+  blueprints?: Blueprint[];
+  orders?: Order[];
   questions?: MapQuestion[];
   mapImportedAt?: string;
 }

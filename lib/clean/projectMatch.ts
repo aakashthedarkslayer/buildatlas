@@ -303,3 +303,29 @@ export function detectKind(fileName: string, text: string): SourceKind {
 export function figmaKeysIn(text: string): string[] {
   return [...new Set([...text.matchAll(/figma\.com\/(?:file|design|proto|board)\/([A-Za-z0-9]{10,})/g)].map((m) => m[1]))];
 }
+
+/**
+ * Distinctive names of every project ("OAPG", "Washemall", "Baby Latch"): used to catch another
+ * client's name left behind in a document copied from an earlier template. Everyday words are skipped.
+ */
+export function distinctiveProjectNames(db: Db): Array<{ projectId: string; name: string }> {
+  const df = wordFrequency(db.projects);
+  AGENCY.clear();
+  for (const t of db.terms) if (t.scope === "global" && t.enabled && (t.type === "agency" || t.type === "url")) for (const w of tokens(t.text.split(".")[0])) AGENCY.add(w);
+  const out: Array<{ projectId: string; name: string }> = [];
+  for (const p of db.projects) {
+    if (p.source === "lead") continue; // lead folder names are descriptions, not brand names
+    for (const k of keysFor(p, db.terms, df).names) {
+      const specific = tokens(k.text).filter((t) => !isGeneric(t));
+      if (k.weight < 0.6 || !specific.length) continue;
+      if (specific.length === 1) {
+        // One word: only brand-shaped ones (OAPG, StreetPin, BabyLatch, Get2cop), never everyday words like "Waste".
+        const word = k.text.split(/[^\p{L}\p{N}]+/u).find((w) => w.toLowerCase() === specific[0]) || "";
+        const brandShaped = (word.match(/\p{Lu}/gu) || []).length >= 2 || /\d/.test(word);
+        if (!brandShaped || word.length < 4 || (df.get(specific[0]) || 0) >= 3) continue;
+      } else if (specificity(k.text) < 8) continue;
+      out.push({ projectId: p.id, name: k.text });
+    }
+  }
+  return out;
+}

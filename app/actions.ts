@@ -115,6 +115,9 @@ export async function setDecision(sourceId: string, form: FormData) {
   const note = String(form.get("note") || "").trim() || undefined;
   await updateSource(sourceId, (s) => {
     if (decision === "approve") {
+      // Nothing can be approved until a cleaned copy exists (Figma: the cleaned duplicate has been verified).
+      if (s.status === "processing" || s.status === "error" || s.status === "needs_access") throw new Error("This file hasn't been cleaned yet.");
+      if (s.format === "figma" && !s.residualCheckedAt) throw new Error("Verify the cleaned Figma duplicate before approving.");
       if (s.residual.length && form.get("override") !== "on") throw new Error("This copy still has possible leftovers. Tick the override box if they are fine.");
       s.status = "approved";
       s.history.push({ at: now(), action: "approved", note });
@@ -438,4 +441,116 @@ export async function fetchPortfolioCaseStudies(): Promise<void> {
     }
   });
   revalidatePath("/map");
+}
+
+// ---------------------------------------------------------------- store: listings & orders (admin)
+
+/** Draft listings for projects with at least `min` asset types (proposal / case study / Figma) known or approved. */
+export async function draftBlueprints(form: FormData) {
+  await requireAdmin();
+  const min = Number(form.get("min") || 2);
+  const { draftBlueprint } = await import("@/lib/blueprints");
+  await mutate((db) => {
+    db.blueprints ||= [];
+    for (const p of db.projects) {
+      if (db.blueprints.some((b) => b.projectId === p.id)) continue;
+      const files = (db.mapFiles || []).filter((f) => f.projectId === p.id);
+      const srcs = db.sources.filter((s) => s.projectId === p.id);
+      const kinds = [
+        files.some((f) => f.kind === "proposal") || srcs.some((s) => s.kind === "proposal"),
+        files.some((f) => f.kind === "case_study") || srcs.some((s) => s.kind === "case_study"),
+        srcs.some((s) => s.format === "figma"),
+      ].filter(Boolean).length;
+      if (kinds < min || !(p.summary || p.details?.overview)) continue;
+      db.blueprints.push(draftBlueprint(db, p));
+    }
+  });
+  revalidatePath("/blueprints");
+}
+
+export async function createBlueprint(projectId: string) {
+  await requireAdmin();
+  const { draftBlueprint } = await import("@/lib/blueprints");
+  const id = await mutate((db) => {
+    db.blueprints ||= [];
+    const p = db.projects.find((x) => x.id === projectId);
+    if (!p) return null;
+    const existing = db.blueprints.find((b) => b.projectId === projectId);
+    if (existing) return existing.id;
+    const bp = draftBlueprint(db, p);
+    db.blueprints.push(bp);
+    return bp.id;
+  });
+  if (id) redirect(`/blueprints/${id}`);
+}
+
+/** Re-draft the text from the catalog and refresh the included (approved) files. Keeps price and published state. */
+export async function redraftBlueprint(id: string) {
+  await requireAdmin();
+  const { draftBlueprint } = await import("@/lib/blueprints");
+  await mutate((db) => {
+    const i = (db.blueprints || []).findIndex((b) => b.id === id);
+    const p = i >= 0 ? db.projects.find((x) => x.id === db.blueprints![i].projectId) : undefined;
+    if (p) db.blueprints![i] = draftBlueprint(db, p);
+  });
+  revalidatePath(`/blueprints/${id}`);
+}
+
+export async function saveBlueprint(id: string, form: FormData) {
+  await requireAdmin();
+  const lines = (k: string) => String(form.get(k) || "").split("\n").map((x) => x.trim()).filter(Boolean);
+  const csv = (k: string) => String(form.get(k) || "").split(",").map((x) => x.trim()).filter(Boolean);
+  await mutate((db) => {
+    const bp = (db.blueprints || []).find((b) => b.id === id);
+    if (!bp) return;
+    Object.assign(bp, {
+      title: String(form.get("title") || bp.title).trim(),
+      tagline: String(form.get("tagline") || "").trim(),
+      summary: String(form.get("summary") || "").trim(),
+      industry: String(form.get("industry") || bp.industry).trim(),
+      platforms: csv("platforms"),
+      tech: csv("tech"),
+      features: lines("features"),
+      challenges: lines("challenges"),
+      price: Math.max(0, Math.round(Number(form.get("price")) || 0)),
+      sourceIds: form.getAll("sourceIds").map(String),
+      updatedAt: now(),
+    });
+  });
+  revalidatePath(`/blueprints/${id}`);
+  revalidatePath("/store");
+}
+
+export async function setPublished(id: string, published: boolean, form?: FormData) {
+  await requireAdmin();
+  const { leakCheck } = await import("@/lib/blueprints");
+  await mutate((db) => {
+    const bp = (db.blueprints || []).find((b) => b.id === id);
+    if (!bp) return;
+    if (published && leakCheck(db, bp).length && form?.get("override") !== "on") throw new Error("The listing still has possible client names. Fix them or tick “I checked these”.");
+    bp.published = published;
+    bp.updatedAt = now();
+  });
+  revalidatePath(`/blueprints/${id}`);
+  revalidatePath("/blueprints");
+  revalidatePath("/store");
+}
+
+export async function deleteBlueprint(id: string) {
+  await requireAdmin();
+  await mutate((db) => {
+    db.blueprints = (db.blueprints || []).filter((b) => b.id !== id);
+  });
+  redirect("/blueprints");
+}
+
+export async function setOrderStatus(id: string, status: "paid" | "cancelled" | "pending") {
+  await requireAdmin();
+  await mutate((db) => {
+    const o = (db.orders || []).find((x) => x.id === id);
+    if (!o) return;
+    o.status = status;
+    o.paidAt = status === "paid" ? now() : undefined;
+  });
+  revalidatePath("/orders");
 }
