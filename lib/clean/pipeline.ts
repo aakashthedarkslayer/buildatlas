@@ -9,6 +9,7 @@ import { analyzeDocx, cleanDocx, docxText, renderDocxPages } from "./docx";
 import { analyzeFigma, buildFigmaPlugin, figmaConfigured, figmaFileKey, figmaThumbnails } from "./figma";
 import { detectPatterns, occurrences, residualCheck, termToFinding } from "./match";
 import { analyzePdf, cleanPdf, pdfText, renderPdfPages } from "./pdf";
+import { mapHintFor } from "../masterMap";
 import { decide, declaredTitle, detectKind, figmaKeysIn, nameFromLabel, scoreProjects, type MatchInput } from "./projectMatch";
 
 // ---------------------------------------------------------------------------
@@ -39,6 +40,25 @@ function matchInputFor(source: Source, text: string): MatchInput {
 export async function matchSource(id: string, text: string): Promise<SourceMatch> {
   const db = await readDb();
   const source = db.sources.find((s) => s.id === id)!;
+
+  // The master map already knows this file: use its decision.
+  const hint = source.fileName ? mapHintFor(db, source.fileName) : undefined;
+  if (hint?.projectId && db.projects.some((p) => p.id === hint.projectId)) {
+    const match: SourceMatch = {
+      status: hint.confidence === "High" ? "confirmed" : "auto",
+      confidence: hint.confidence === "High" ? 100 : 80,
+      candidates: [{ projectId: hint.projectId, score: 100, evidence: [`Master map (${hint.location})${hint.note ? `: ${hint.note}` : ""}`] }],
+      detectedKind: hint.kind,
+      matchedAt: now(),
+    };
+    await updateSource(id, (s) => {
+      s.match = match;
+      s.projectId = hint.projectId;
+      if (s.autoKind || s.kind === "other") s.kind = hint.kind;
+    });
+    return match;
+  }
+
   const input = matchInputFor(source, text);
   let candidates = scoreProjects(db, input);
   let { status, confidence } = decide(candidates);
@@ -89,7 +109,7 @@ export async function rematchSource(id: string): Promise<SourceMatch | null> {
   const text = await fs.readFile(path.join(sourceDir(id), "original.txt"), "utf8").catch(() => "");
   const before = s.projectId;
   const m = await matchSource(id, text);
-  if (m.status === "auto" && m.candidates[0].projectId !== before && s.status !== "needs_access") void enqueueScan(id);
+  if ((m.status === "auto" || m.status === "confirmed") && m.candidates[0] && m.candidates[0].projectId !== before && s.status !== "needs_access") void enqueueScan(id);
   return m;
 }
 
@@ -195,7 +215,7 @@ export async function scanSource(id: string): Promise<void> {
     }
     if (source.autoProject && !source.projectId && source.match?.status !== "confirmed") {
       const m = await matchSource(id, text);
-      if (m.status === "auto") {
+      if ((m.status === "auto" || m.status === "confirmed") && m.candidates[0]) {
         source.projectId = m.candidates[0].projectId;
         project = await getProject(source.projectId);
       }

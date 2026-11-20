@@ -9,6 +9,7 @@ import { requireAdmin } from "@/lib/auth";
 import { applyClean, enqueueScan, rematchSource, verifyFigma } from "@/lib/clean/pipeline";
 import { figmaFileKey } from "@/lib/clean/figma";
 import { applyCatalog } from "@/lib/catalog";
+import { fileKey } from "@/lib/masterMap";
 import { occurrences } from "@/lib/clean/match";
 import { createSessionValue, SESSION_COOKIE, SESSION_MAX_AGE } from "@/lib/session";
 import { mutate, newId, now, readDb, sourceDir, updateSource } from "@/lib/store";
@@ -351,4 +352,90 @@ export async function addCatalogFigmas(): Promise<void> {
   });
   revalidatePath("/mapping");
   revalidatePath("/sources");
+}
+
+// ---------------------------------------------------------------- master map
+
+/** Load seed/master-map.json (projects, Figma files, known proposals / case studies, open questions). */
+export async function importMasterMap(): Promise<void> {
+  await requireAdmin();
+  const { applyMasterMap } = await import("@/lib/masterMap");
+  const { figmaConfigured } = await import("@/lib/clean/figma");
+  const result = await mutate((db) => applyMasterMap(db));
+  await Promise.all(result.figma.map((id) => fs.mkdir(sourceDir(id), { recursive: true })));
+  // Without a Figma token the new Figma sources just wait ("Needs Figma access"); with one they get scanned.
+  after(async () => {
+    for (const id of result.figma) {
+      if (figmaConfigured()) await enqueueScan(id);
+      else
+        await updateSource(id, (s) => {
+          s.status = "needs_access";
+          s.error = "Add FIGMA_TOKEN to scan and clean this file.";
+        });
+    }
+  });
+  revalidatePath("/map");
+  revalidatePath("/projects");
+  revalidatePath("/");
+}
+
+/** Answer an open question from the master map: re-link the files / Figma it is about. */
+export async function answerQuestion(questionId: string, form: FormData) {
+  await requireAdmin();
+  const projectId = String(form.get("projectId") || "") || undefined;
+  const text = String(form.get("text") || "").trim() || undefined;
+  const rescan: string[] = [];
+  await mutate((db) => {
+    const q = (db.questions || []).find((x) => x.id === questionId);
+    if (!q) return;
+    q.answer = { projectId, text, at: now() };
+    if (!projectId) return;
+    for (const t of q.targets) {
+      if (t.kind === "file") {
+        for (const f of db.mapFiles || []) if (fileKey(f.fileName) === fileKey(t.fileName)) Object.assign(f, { projectId, confidence: "High", note: `Answered: ${q.item}` });
+        for (const s of db.sources) if (s.fileName && fileKey(s.fileName) === fileKey(t.fileName) && s.projectId !== projectId) {
+          s.projectId = projectId;
+          s.match = { status: "confirmed", confidence: 100, candidates: [{ projectId, score: 100, evidence: ["Your answer on the Master map page"] }], matchedAt: now() };
+          rescan.push(s.id);
+        }
+      } else {
+        for (const s of db.sources) if (s.format === "figma" && s.title === t.name) {
+          s.projectId = projectId;
+          s.match = { status: "confirmed", confidence: 100, candidates: [{ projectId, score: 100, evidence: ["Your answer on the Master map page"] }], matchedAt: now() };
+        }
+      }
+    }
+  });
+  after(async () => {
+    for (const id of rescan) await enqueueScan(id);
+  });
+  revalidatePath("/map");
+}
+
+/** Download the case studies published on the portfolio site and add them, already linked, for cleaning. */
+export async function fetchPortfolioCaseStudies(): Promise<void> {
+  await requireAdmin();
+  const db = await readDb();
+  const have = new Set(db.sources.map((s) => s.fileName?.toLowerCase()).filter(Boolean));
+  const todo = (db.mapFiles || []).filter((f) => f.kind === "case_study" && f.url && f.projectId && !have.has(f.fileName.toLowerCase()));
+  after(async () => {
+    const { createSource } = await import("@/lib/clean/pipeline");
+    for (const f of todo) {
+      try {
+        const res = await fetch(f.url!);
+        if (!res.ok) continue;
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        if (bytes[0] !== 0x25 || bytes[1] !== 0x50) continue; // not a PDF
+        const project = (await readDb()).projects.find((p) => p.id === f.projectId);
+        const s = await createSource({ kind: "case_study", title: `${project?.name || "Case study"} – case study`, format: "pdf", fileName: f.fileName, projectId: f.projectId }, bytes);
+        await updateSource(s.id, (x) => {
+          x.match = { status: "confirmed", confidence: 100, candidates: [{ projectId: f.projectId!, score: 100, evidence: ["Master map: published on the portfolio site"] }], matchedAt: now() };
+        });
+        await enqueueScan(s.id);
+      } catch {
+        /* site unreachable for this file: skip, the button can be pressed again */
+      }
+    }
+  });
+  revalidatePath("/map");
 }

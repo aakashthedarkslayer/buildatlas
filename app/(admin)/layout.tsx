@@ -25,6 +25,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </div>
         <nav className="flex-1 space-y-0.5 px-3 text-sm">
           <NavLink href="/">Dashboard</NavLink>
+          <NavLink href="/map">Master map</NavLink>
           <NavLink href="/upload">Upload</NavLink>
           <NavLink href="/mapping" badge={toMap || undefined}>
             Mapping

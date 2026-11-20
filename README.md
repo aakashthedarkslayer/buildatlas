@@ -32,6 +32,16 @@ Uploads, cleaned files and the database (`db.json`) live in `./data` (or `DATA_D
    - **Save & re-clean** regenerates the copy, then re-reads it and lists any **possible leftovers**.
 5. **Approve** (or request changes). A project is blueprint-complete when its proposal, case study and Figma are all approved.
 
+## Master map
+
+`seed/master-map.json` holds the mapping prepared from the portfolio catalog, the Figma sheets, the case studies and the 2026 lead proposals: every project with its proposals, case studies and Figma files, plus a few open questions. On first start the dashboard offers **Load master map**; afterwards the **Master map** page shows each project's bundle (proposal / case study / Figma) and the files behind it.
+
+- Uploading a file the map knows (same file name) links it to its project automatically, no confirmation needed.
+- **Fetch case studies from portfolio site** downloads the published case studies and adds them already linked.
+- **Questions for you** re-link the affected files once answered.
+
+The map contains client and lead names: keep the repository private.
+
 ## Automatic mapping (which file belongs to which project)
 
 Upload with **Type** and **Project** set to “Detect automatically” (the default), using **Choose a folder** or drag a whole folder in. Every file is uploaded on its own (so a big folder can't fail all at once), its type is detected (proposal / case study), and it is matched against the catalog:

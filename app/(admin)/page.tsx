@@ -1,11 +1,14 @@
 import Link from "next/link";
 import { KindBadge, StatusBadge, timeAgo } from "@/components/Badges";
+import { importMasterMap } from "@/app/actions";
+import { masterMapAvailable } from "@/lib/masterMap";
 import { readDb } from "@/lib/store";
 import type { SourceKind } from "@/lib/types";
 import { KIND_LABEL } from "@/lib/types";
 
 export default async function Dashboard() {
   const db = await readDb();
+  const mapAvailable = !db.mapImportedAt && (await masterMapAvailable());
   const count = (f: (s: (typeof db.sources)[number]) => boolean) => db.sources.filter(f).length;
   const kinds: SourceKind[] = ["proposal", "case_study", "figma"];
   const queue = db.sources.filter((s) => s.status === "needs_review" || s.status === "changes_requested" || s.status === "error").slice(0, 8);
@@ -29,6 +32,15 @@ export default async function Dashboard() {
         </div>
         <Link href="/upload" className="btn btn-primary">Upload files</Link>
       </header>
+
+      {mapAvailable && (
+        <form action={importMasterMap} className="card flex flex-wrap items-center justify-between gap-3 border-brand-500 bg-brand-50 p-4">
+          <p className="text-sm text-slate-700">
+            <b>The master map is ready to load:</b> all projects with their proposals, case studies and Figma files, so uploads link themselves.
+          </p>
+          <button className="btn btn-primary">Load master map</button>
+        </form>
+      )}
 
       <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Stat label="Needs review" value={count((s) => s.status === "needs_review")} tone="amber" href="/sources?status=needs_review" />

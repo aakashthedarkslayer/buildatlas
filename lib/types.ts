@@ -142,13 +142,44 @@ export interface Project {
   figmaKeys?: string[];
   /** Figma links from the catalog (not necessarily uploaded yet). */
   figmaLinks?: string[];
+  /** Where the project comes from: the portfolio catalog, a 2026 sales lead, or added during mapping. */
+  source?: "catalog" | "lead" | "new";
+  /** Master-map key (e.g. "cat:S2219", "lead:JUN/<folder>"). */
+  mapKey?: string;
+  month?: string;
+  leadFolder?: string;
+  notes?: string;
   createdAt: string;
+}
+
+/** A file the master map knows about: uploading a file with this name links it automatically. */
+export interface MapFile {
+  kind: "proposal" | "case_study";
+  fileName: string;
+  location: string;
+  url?: string;
+  projectId?: string;
+  confidence: string;
+  note?: string;
+}
+
+export interface MapQuestion {
+  id: string;
+  item: string;
+  question: string;
+  targets: Array<{ kind: "file"; fileName: string } | { kind: "figma"; name: string }>;
+  suggest?: string[];
+  answer?: { projectId?: string; text?: string; at: string };
 }
 
 export interface Db {
   projects: Project[];
   sources: Source[];
   terms: Term[];
+  /** Master map: known proposals / case studies and open questions. */
+  mapFiles?: MapFile[];
+  questions?: MapQuestion[];
+  mapImportedAt?: string;
 }
 
 export const KIND_LABEL: Record<SourceKind, string> = {
