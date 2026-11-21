@@ -1,0 +1,58 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  /* Graphite surfaces */
+  --color-ink-950: #07090d;
+  --color-ink-900: #0a0c10;
+  --color-ink-850: #0e1117;
+  --color-ink-800: #12161e;
+  --color-ink-700: #1a1f2a;
+  --color-ink-600: #252b38;
+  --color-ink-500: #3a4252;
+
+  /* One accent: electric sky blue; teal used sparingly for status */
+  --color-accent-300: #7dd3fc;
+  --color-accent-400: #38bdf8;
+  --color-accent-500: #0ea5e9;
+  --color-accent-600: #0284c7;
+  --color-signal: #2dd4bf;
+
+  --animate-rise: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
+  background: var(--color-ink-900);
+  color-scheme: dark;
+}
+body {
+  @apply bg-ink-900 font-sans text-slate-300 antialiased;
+  font-feature-settings: "cv11", "ss01", "ss03";
+}
+::selection { background: rgb(56 189 248 / 0.3); color: white; }
+
+/* Visible keyboard focus everywhere, invisible for mouse users */
+:focus-visible { outline: 2px solid var(--color-accent-400); outline-offset: 3px; border-radius: 6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* Hairline grid used behind the hero, very low contrast */
+.hairline-grid {
+  background-image: linear-gradient(to right, rgb(255 255 255 / 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.035) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, black 40%, transparent 100%);
+}
